@@ -14,7 +14,7 @@ window.isIframe = window.self !== window.top;
 let sdkAppId;
 let sdkSecretKey;
 let roomId;
-let trtc = TRTC.create()
+let trtc = TRTC.create({ plugins: [VideoMixer, CDNStreaming] })
 
 let userId;
 let shareUserId;
@@ -33,6 +33,10 @@ let video = true;
 let isShared = false;
 let isCamOpened = false;
 let isMicOpened = false;
+
+// mixer state
+let mixerStarted = false;
+let remoteUsersSet = new Set();
 
 TRTC.setLogLevel(1);
 
@@ -132,6 +136,10 @@ async function exitRoom() {
 		if (isMicOpened) stopLocalAudio();
 		if (isCamOpened) stopLocalVideo();
 		if (isShared) stopShare();
+		if (mixerStarted) {
+			try { await trtc.stopPlugin('VideoMixer'); } catch (e) {}
+			mixerStarted = false;
+		}
 	}
 }
 
@@ -333,15 +341,28 @@ function handleEvent() {
 		const elementId = `${userId}_${streamType}`;
 		addStreamView(elementId);
 		trtc.startRemoteVideo({ userId, streamType, view: elementId });
+		if (streamType === TRTC.TYPE.STREAM_TYPE_MAIN) remoteUsersSet.add(userId);
+		if (streamType === TRTC.TYPE.STREAM_TYPE_MAIN && mixerStarted) {
+			updateMixerLayout();
+		}
 	});
 	trtc.on(TRTC.EVENT.REMOTE_VIDEO_UNAVAILABLE, ({ userId, streamType }) => {
 		const elementId = `${userId}_${streamType}`;
 		removeStreamView(elementId);
 		trtc.stopRemoteVideo({ userId, streamType });
+		if (streamType === TRTC.TYPE.STREAM_TYPE_MAIN) remoteUsersSet.delete(userId);
+		if (streamType === TRTC.TYPE.STREAM_TYPE_MAIN && mixerStarted) {
+			updateMixerLayout();
+		}
 	});
 	trtc.on(TRTC.EVENT.SCREEN_SHARE_STOPPED, () => {
 		console.log('screen sharing was stopped');
 		stopShare();
+	});
+	trtc.on(TRTC.EVENT.FIRST_VIDEO_FRAME, ({ userId, streamType }) => {
+		if (streamType === TRTC.TYPE.STREAM_TYPE_MAIN && mixerStarted) {
+			updateMixerLayout();
+		}
 	});
 	trtc.on(TRTC.EVENT.DEVICE_CHANGED, async ({ type }) => {
 		if (type === 'camera') getCamera();
@@ -361,6 +382,12 @@ stopLocalVideoBtn.addEventListener('click', stopLocalVideo, false);
 
 startShareBtn.addEventListener('click', startShare, false);
 stopShareBtn.addEventListener('click', stopShare, false);
+
+// mixer buttons
+document.getElementById('startMixer')?.addEventListener('click', startMixerPreview, false);
+document.getElementById('stopMixer')?.addEventListener('click', stopMixerPreview, false);
+document.getElementById('startCloudMix')?.addEventListener('click', startCloudMix, false);
+document.getElementById('stopCloudMix')?.addEventListener('click', stopCloudMix, false);
 
 microphoneSelect.onchange = async (e) => {
 	if (trtc) {
@@ -394,6 +421,139 @@ function createShareLink() {
 	const { origin } = window.location;
 	const pathname = window.location.pathname.replace('index.html', 'invite/invite.html');
 	return `${origin}${pathname}?userSig=${userSig}&&SDKAppId=${sdkAppId}&&userId=${userId}&&roomId=${roomId}`;
+}
+
+async function startMixerPreview() {
+	try {
+		if (mixerStarted) return;
+		// ensure local published
+		await trtc.updateLocalVideo({ publish: true });
+
+		const localUserId = userId;
+		const remoteList = Array.from(remoteUsersSet);
+		const secondUserId = remoteList.find(id => id !== localUserId);
+
+		const canvasWidth = 1280;
+		const canvasHeight = 720;
+
+		const localTrack = trtc.getVideoTrack();
+		const cameraSources = [];
+		if (localTrack) {
+			cameraSources.push({
+				id: 'cam_local',
+				videoTrack: localTrack,
+				layout: { x: 0, y: 0, width: canvasWidth / 2, height: canvasHeight, zIndex: 1, fillMode: 'cover' }
+			});
+		}
+
+		if (secondUserId) {
+			const remoteTrack = await getRemoteMainTrack(secondUserId, 3000);
+			if (remoteTrack) {
+				cameraSources.push({
+					id: 'cam_remote',
+					videoTrack: remoteTrack,
+					layout: { x: canvasWidth / 2, y: 0, width: canvasWidth / 2, height: canvasHeight, zIndex: 1, fillMode: 'cover', mirror: true }
+				});
+			}
+		}
+
+		await trtc.startPlugin('VideoMixer', {
+			view: 'mixerPreview',
+			canvasInfo: { width: canvasWidth, height: canvasHeight },
+			camera: cameraSources
+		});
+
+		mixerStarted = true;
+		addSuccessLog('VideoMixer started');
+		// keep current layout updated if participants change
+		updateMixerLayout.cachedSize = { width: canvasWidth, height: canvasHeight };
+	} catch (error) {
+		addFailedLog(`VideoMixer start failed: ${error.message}`);
+	}
+}
+
+async function stopMixerPreview() {
+	try {
+		if (!mixerStarted) return;
+		await trtc.stopPlugin('VideoMixer');
+		mixerStarted = false;
+		addSuccessLog('VideoMixer stopped');
+	} catch (error) {
+		addFailedLog(`VideoMixer stop failed: ${error.message}`);
+	}
+}
+
+async function updateMixerLayout() {
+	try {
+		if (!mixerStarted) return;
+		const { width, height } = updateMixerLayout.cachedSize || { width: 1280, height: 720 };
+		const localTrack = trtc.getVideoTrack();
+		const cameraSources = [];
+		if (localTrack) {
+			cameraSources.push({ id: 'cam_local', videoTrack: localTrack, layout: { x: 0, y: 0, width: width / 2, height, zIndex: 1, fillMode: 'cover' } });
+		}
+		const remoteList = Array.from(remoteUsersSet);
+		const secondUserId = remoteList.find(id => id !== userId);
+		if (secondUserId) {
+			const remoteTrack = await getRemoteMainTrack(secondUserId, 2000);
+			if (remoteTrack) {
+				cameraSources.push({ id: 'cam_remote', videoTrack: remoteTrack, layout: { x: width / 2, y: 0, width: width / 2, height, zIndex: 1, fillMode: 'cover', mirror: true } });
+			}
+		}
+		await trtc.updatePlugin('VideoMixer', {
+			canvasInfo: { width, height },
+			camera: cameraSources,
+		});
+	} catch (error) {
+		addFailedLog(`VideoMixer update failed: ${error.message}`);
+	}
+}
+
+async function getRemoteMainTrack(targetUserId, timeoutMs = 2000) {
+	const start = Date.now();
+	let track = trtc.getVideoTrack({ userId: targetUserId, streamType: TRTC.TYPE.STREAM_TYPE_MAIN });
+	while (!track && Date.now() - start < timeoutMs) {
+		await new Promise(r => setTimeout(r, 200));
+		track = trtc.getVideoTrack({ userId: targetUserId, streamType: TRTC.TYPE.STREAM_TYPE_MAIN });
+	}
+	if (!track) {
+		console.warn('Remote main track not ready for', targetUserId);
+	}
+	return track;
+}
+
+// Cloud mix via CDNStreaming plugin (server-side MCU) as a fallback when local mixer can't access remote track reliably.
+async function startCloudMix() {
+	try {
+		if (!userId || !roomId) return;
+		const w = 1280; const h = 720;
+		const remoteList = Array.from(remoteUsersSet);
+		const secondUserId = remoteList.find(id => id !== userId);
+		if (!secondUserId) { addFailedLog('CloudMix: need another anchor'); return; }
+		await trtc.startPlugin('CDNStreaming', {
+			target: { publishMode: CDNStreaming.TYPE.PublishMode.PublishMixStreamToCDN },
+			encoding: { videoWidth: w, videoHeight: h, videoBitrate: 1500, videoFramerate: 15, videoGOP: 2, audioBitrate: 64, audioSampleRate: 48000, audioChannels: 1 },
+			mix: {
+				audioMixUserList: [ { userId, roomId }, { userId: secondUserId, roomId } ],
+				videoLayoutList: [
+					{ fixedVideoUser: { userId, roomId }, fixedVideoStreamType: TRTC.TYPE.STREAM_TYPE_MAIN, width: w/2, height: h, locationX: 0, locationY: 0, zOrder: 1 },
+					{ fixedVideoUser: { userId: secondUserId, roomId }, fixedVideoStreamType: TRTC.TYPE.STREAM_TYPE_MAIN, width: w/2, height: h, locationX: w/2, locationY: 0, zOrder: 1 }
+				]
+			}
+		});
+		addSuccessLog('CloudMix started (server-side)');
+	} catch (e) {
+		addFailedLog(`CloudMix start failed: ${e.message}`);
+	}
+}
+
+async function stopCloudMix() {
+	try {
+		await trtc.stopPlugin('CDNStreaming', { target: { publishMode: CDNStreaming.TYPE.PublishMode.PublishMixStreamToCDN } });
+		addSuccessLog('CloudMix stopped');
+	} catch (e) {
+		addFailedLog(`CloudMix stop failed: ${e.message}`);
+	}
 }
 
 let clipboard = new ClipboardJS('#inviteBtn');

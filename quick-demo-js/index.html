@@ -310,6 +310,35 @@
           <div class='local' id='local'></div>
         </div>
         <div class='player' id='remote-container'></div>
+        <h1 style='font-size: 14px'>
+          <span class='en'>Video Mixer (Preview)</span>
+          <span class='zh-cn'>视频混流预览</span>
+        </h1>
+        <div class='wrapper'>
+          <button id='startMixer' type='button' class='btn btn-primary btn-sm'>
+            <span class="loading-icon"> </span>
+            <span class='en'> Start Mixer </span>
+            <span class='zh-cn'> 启动混流预览 </span>
+          </button>
+          <button id='stopMixer' type='button' class='btn btn-outline-primary btn-sm'>
+            <span class="loading-icon"> </span>
+            <span class='en'> Stop Mixer </span>
+            <span class='zh-cn'> 停止混流预览 </span>
+          </button>
+        </div>
+        <div class='wrapper'>
+          <button id='startCloudMix' type='button' class='btn btn-secondary btn-sm'>
+            <span class="loading-icon"> </span>
+            <span class='en'> Start Cloud Mix (Preview) </span>
+            <span class='zh-cn'> 启动云端混流（预览） </span>
+          </button>
+          <button id='stopCloudMix' type='button' class='btn btn-outline-secondary btn-sm'>
+            <span class="loading-icon"> </span>
+            <span class='en'> Stop Cloud Mix </span>
+            <span class='zh-cn'> 停止云端混流 </span>
+          </button>
+        </div>
+        <div id='mixerPreview' style='width: 640px; height: 360px; background: #000; border-radius: 6px; margin: 8px 0;'></div>
       </div>
 
     </div>
@@ -356,6 +385,8 @@
   </script>
   <script src='https://web.sdk.qcloud.com/trtc/webrtc/demo/detect/vconsole.min.js'></script>
   <script src='https://web.sdk.qcloud.com/trtc/webrtc/v5/dist/trtc.js'></script>
+  <script src='../SDK/plugins/cdn-streaming/cdn-streaming.umd.js'></script>
+  <script src='../SDK/plugins/video-effect/video-mixer/video-mixer.umd.js'></script>
   <script src='https://cdn-go.cn/aegis/aegis-sdk/latest/aegis.min.js'></script>
   <script src='js/libs/clipboard.min.js'></script>
   <script src='js/libs/lib-generate-test-usersig.min.js'></script>
